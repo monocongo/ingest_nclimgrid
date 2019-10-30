@@ -392,6 +392,8 @@ def ingest_nclimgrid_dataset(parameters):
         from a process pool mapping which requires a single function argument
     """
 
+    # TODO add a temporary directory and download files from NCEI FTP locations
+
     try:
         # determine the input directory containing the ASCII files for the variable based on the variable's name
         if parameters['variable_name'] == 'prcp':
@@ -403,7 +405,10 @@ def ingest_nclimgrid_dataset(parameters):
         elif parameters['variable_name'] == 'tmin':
             input_directory = '/gcad/nclimdiv/us/por/tmin/pnt'
         else:
-            raise ValueError('The variable_name argument \"{}\" is unsupported.'.format(parameters['variable_name']))
+            raise ValueError(
+                'The variable_name argument '
+                f'\"{parameters["variable_name"]}\" is unsupported.',
+            )
 
         logger.info(
             f'Ingesting ASCII files for variable \"{parameters["variable_name"]}\"'
@@ -441,7 +446,8 @@ def ingest_nclimgrid_dataset(parameters):
             parameters['dest_dir'] + '/nclimgrid_' + \
             parameters['variable_name'] + '.nc'
 
-        # make sure the base file is present, if not then we'll recreate it as we would during January's ingest
+        # make sure the base file is present, if not then we'll
+        # recreate it as we would during January's ingest
         if (parameters['current_month'] == 1) or not os.path.isfile(base_netcdf_file):
             logger.info(
                 f'Building the {parameters["variable_name"]} NetCDF for base '
