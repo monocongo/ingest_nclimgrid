@@ -58,23 +58,29 @@ def find_files_within_range(directory,
 
 
 # ------------------------------------------------------------------------------
-# TODO extract this out into a netCDF utilities module, as it's useful (and duplicated) in other codes
+# TODO extract this out into a netCDF utilities module, as it's
+#  useful (and duplicated) in other codes
 def compute_days(initial_year,
                  initial_month,
                  total_months,
                  start_year=1800):
     """
-    Computes the "number of days" equivalent of the regular, incremental monthly time steps from an initial year/month.
+    Computes the "number of days" equivalent of the regular, incremental monthly
+    time steps from an initial year/month.
 
     :param initial_year: the initial year from which the increments should start
     :param initial_month: the initial month from which the increments should start
-    :param total_months: the total number of monthly increments (time steps measured in days) to be computed
-    :param start_year: the start year from which the monthly increments (time steps measured in days) to be computed
-    :return: an array of time step increments, measured in days since midnight of January 1st of the start_year
+    :param total_months: the total number of monthly increments (time steps
+        measured in days) to be computed
+    :param start_year: the start year from which the monthly increments
+        (time steps measured in days) to be computed
+    :return: an array of time step increments, measured in days since midnight
+        of January 1st of the start_year
     :rtype: ndarray of ints
     """
 
-    # compute an offset from which the day values should begin (assuming that we're using "days since <start_date>" as time units)
+    # compute an offset from which the day values should begin
+    # (assuming that we're using "days since <start_date>" as time units)
     start_date = datetime(start_year, 1, 1)
 
     # initialize the list of day values we'll build
@@ -82,8 +88,11 @@ def compute_days(initial_year,
 
     # loop over all time steps (months)
     for i in range(total_months):
-        years = int((i + initial_month - 1) / 12)  # the number of years since the initial year
-        months = int((i + initial_month - 1) % 12)  # the number of months since January
+
+        # the number of years since the initial year
+        years = int((i + initial_month - 1) / 12)
+        # the number of months since January
+        months = int((i + initial_month - 1) % 12)
 
         # cook up a date for the current time step (month)
         current_date = datetime(initial_year + years, 1 + months, 1)
@@ -139,13 +148,13 @@ def get_coordinate_values(ascii_file):
 
 
 # ------------------------------------------------------------------------------
-def get_variable_attributes(variable_name):
+def get_variable_attributes(var_name):
     """
     This function builds a dictionary of variable attributes based on the
     variable name. Four variable names are supported: 'prcp', 'tavg', 'tmin',
     and 'tmax'.
 
-    :param variable_name:
+    :param var_name:
     :return: attributes relevant to the specified variable name
     :rtype: dictionary with string keys corresponding to attribute names
         specified by the NCEI NetCDF template for gridded datasets
@@ -160,7 +169,7 @@ def get_variable_attributes(variable_name):
     }
 
     # flesh out additional attributes, based on the variable type
-    if variable_name == 'prcp':
+    if var_name == 'prcp':
         attributes['long_name'] = 'Precipitation, monthly total'
         attributes['standard_name'] = 'precipitation_amount'
         attributes['units'] = 'millimeter'
@@ -171,14 +180,14 @@ def get_variable_attributes(variable_name):
         attributes['units'] = 'degree_Celsius'
         attributes['valid_min'] = np.float32(-100.0)
         attributes['valid_max'] = np.float32(100.0)
-        if variable_name == 'tavg':
+        if var_name == 'tavg':
             attributes['long_name'] = 'Temperature, monthly average of daily averages'
-        elif variable_name == 'tmax':
+        elif var_name == 'tmax':
             attributes['long_name'] = 'Temperature, monthly average of daily maximums'
-        elif variable_name == 'tmin':
+        elif var_name == 'tmin':
             attributes['long_name'] = 'Temperature, monthly average of daily minimums'
         else:
-            raise ValueError('The variable_name argument \"{}\" is unsupported.'.format(variable_name))
+            raise ValueError('The variable_name argument \"{}\" is unsupported.'.format(var_name))
 
     return attributes
 
@@ -207,8 +216,6 @@ def build_netcdf(
     # to be in the format <YYYYMM>.pnt, eg. "201004.pnt" for April 2010
     initial_year = int(ascii_files[0][-10:-6])
     initial_month = int(ascii_files[0][-6:-4])
-    final_year = int(ascii_files[-1][-10:-6])
-    final_month = int(ascii_files[-1][-6:-4])
 
     # use NaN as the fill value for missing data
     output_fill_value = np.float32(np.NaN)
@@ -420,16 +427,19 @@ def ingest_nclimgrid_dataset(parameters):
         # create the file names for the various output NetCDFs we'll create
         # TODO also get the base filename (eg. currently 'nclimgrid')
         #  as a parameter from command line argument
-        base_netcdf_file = parameters['storage_dir'] + '/nclimgrid_' + \
-                           parameters['base_start'] + '_' + \
-                           parameters['base_end'] + '_' + \
-                           parameters['variable_name'] + '.nc'
-        incremental_netcdf_file = parameters['storage_dir'] + '/nclimgrid_' + \
-                                  parameters['incremental_start'] + '_' + \
-                                  parameters['incremental_end'] + '_' + \
-                                  parameters['variable_name'] + '.nc'
-        destination_netcdf_file = parameters['dest_dir'] + '/nclimgrid_' + \
-                                  parameters['variable_name'] + '.nc'
+        base_netcdf_file = \
+            parameters['storage_dir'] + '/nclimgrid_' + \
+            parameters['base_start'] + '_' + \
+            parameters['base_end'] + '_' + \
+            parameters['variable_name'] + '.nc'
+        incremental_netcdf_file = \
+            parameters['storage_dir'] + '/nclimgrid_' + \
+            parameters['incremental_start'] + '_' + \
+            parameters['incremental_end'] + '_' + \
+            parameters['variable_name'] + '.nc'
+        destination_netcdf_file = \
+            parameters['dest_dir'] + '/nclimgrid_' + \
+            parameters['variable_name'] + '.nc'
 
         # make sure the base file is present, if not then we'll recreate it as we would during January's ingest
         if (parameters['current_month'] == 1) or not os.path.isfile(base_netcdf_file):
@@ -482,39 +492,45 @@ if __name__ == '__main__':
     try:
         # parse the command line arguments
         argument_parser = argparse.ArgumentParser()
-        argument_parser.add_argument("-d",
-                                     "--dest_dir",
-                                     required=True,
-                                     help="directory where the final, full time series NetCDF should be written")
-        argument_parser.add_argument("-s",
-                                     "--storage_dir",
-                                     required=True,
-                                     help="directory where the base and (optionally) incremental NetCDF files should be stored")
+        argument_parser.add_argument(
+            "-d",
+            "--dest_dir",
+            required=True,
+            help="directory where the final, full time series NetCDF should be written",
+        )
+        argument_parser.add_argument(
+            "-s",
+            "--storage_dir",
+            required=True,
+            help="directory where the base and (optionally) incremental NetCDF "
+                 "files should be stored",
+        )
         args = argument_parser.parse_args()
 
-        # get the current year and month, used to determine the start/end points for the base and incremental periods
+        # get the current year and month, used to determine
+        # the start/end points for the base and incremental periods
         current_year = date.today().year
         current_month = date.today().month
 
-        """
-        If we're running this code during January then we'll ingest the "base" period of record, i.e. from January 1895 
-        through December of the year which is two years before the current year, as well as the "incremental" period
-        which includes all months after the base period to the previous month. For this initial monthly run of the year
-        the base period files will be cached in the specified storage directory for use with subsequent monthly runs,
-        eliminating the need to reingest that portion of the dataset, since the base period data is guaranteed to be
-        updated only once a year, at the start of each calendar year.
-        """
+        # If we're running this code during January then we'll ingest the "base"
+        # period of record, i.e. from January 1895 through December of the year
+        # which is two years before the current year, as well as the "incremental"
+        # period which includes all months after the base period to the previous
+        # month. For this initial monthly run of the year the base period files
+        # will be cached in the specified storage directory for use with subsequent
+        # monthly runs, eliminating the need to reingest that portion of the dataset,
+        # since the base period data is guaranteed to be updated only once a year,
+        # at the start of each calendar year.
 
         # the base period is the start of the dataset up to two years previous
         # (for example during 2014 the base period goes through December 2012)
-        base_start = '189501'  # the period of record for GHCN-M, from which nClimGrid was derived, begins January 1895
+        # the period of record for GHCN-M, from which nClimGrid was derived,
+        # begins January 1895
+        base_start = '189501'
         base_end = str(current_year - 2) + '12'
 
-        #         # DEBUG/TESTING ONLY -- REMOVE before operational deployment of this code
-        #         current_month = 1
-        #         base_start = '201001'
-
-        # the starting year/month of the incremental period is always January of the previous year
+        # the starting year/month of the incremental period
+        # is always January of the previous year
         incremental_start = str(current_year - 1) + '01'
 
         # set the incremental period's end point
@@ -528,22 +544,27 @@ if __name__ == '__main__':
             # set the incremental end year/month to the previous month of the current year
             incremental_end = str(current_year) + str(current_month - 1).zfill(2)
 
-        # create an iterable containing dictionaries of parameters, with one dictionary of parameters per variable,
-        # since there will be a separate ingest process per variable, with each process having its own set of parameters
+        # create an iterable containing dictionaries of parameters, with one
+        # dictionary of parameters per variable, since there will be a separate
+        # ingest process per variable, with each process having its own set
+        # of parameters
         variables = ['prcp', 'tavg', 'tmin', 'tmax']
         params_list = []
         for variable_name in variables:
-            params = {'current_month': current_month,
-                      'variable_name': variable_name,
-                      'storage_dir': args.storage_dir,
-                      'dest_dir': args.dest_dir,
-                      'base_start': base_start,
-                      'base_end': base_end,
-                      'incremental_start': incremental_start,
-                      'incremental_end': incremental_end}
+            params = {
+                'current_month': current_month,
+                'variable_name': variable_name,
+                'storage_dir': args.storage_dir,
+                'dest_dir': args.dest_dir,
+                'base_start': base_start,
+                'base_end': base_end,
+                'incremental_start': incremental_start,
+                'incremental_end': incremental_end,
+            }
             params_list.append(params)
 
-        # create a process pool, mapping the ingest process to the iterable of parameter lists
+        # create a process pool, mapping the ingest
+        # process to the iterable of parameter lists
         pool = multiprocessing.Pool(min(len(variables), multiprocessing.cpu_count()))
         result = pool.map_async(ingest_nclimgrid_dataset, params_list)
 
@@ -553,11 +574,10 @@ if __name__ == '__main__':
 
         # set the permissions (recursively) on the destination directory
         logger.info(
-            'Changing permissions to 775 on all files under the destination directory: {}'.format(args.dest_dir))
+            'Changing permissions to 775 on all files under '
+            f'the destination directory: {args.dest_dir}',
+        )
         for root, dirs, files in os.walk(args.dest_dir):
-            #             # join the directory name with the root directory path, change the permissions
-            #             for dir in dirs:
-            #                 os.chmod(os.path.join(root, dir), 0o775)
             # join the file name with the root directory path, change the permissions
             for file in files:
                 os.chmod(os.path.join(root, file), 0o775)
