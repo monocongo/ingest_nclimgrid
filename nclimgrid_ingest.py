@@ -47,19 +47,26 @@ def find_files_within_range(
     ftp.quit()
 
     # get all the file names that fall within the data range
-    file_names = []
+    file_names_normal = []
+    file_names_preliminary = []
     for line in data:
         parts = line.split()
         file_name = parts[-1]
-        if file_name.startswith("nClimGrid_v1.0") \
+        if file_name.startswith("nClimGrid_v1.0_monthly") \
                 and file_name.endswith(".tar.gz"):
             year_month = int(file_name[-23:-17])
             if (year_month >= int(year_month_initial)) \
                 and (year_month <= int(year_month_final)):
-                file_names.append(file_name)
+                file_names_normal.append(file_name)
+        elif file_name.startswith("nClimGrid_v1.0-preliminary") \
+                and file_name.endswith(".tar.gz"):
+            year_month = int(file_name[-23:-17])
+            if (year_month >= int(year_month_initial)) \
+                and (year_month <= int(year_month_final)):
+                file_names_preliminary.append(file_name)
 
     # return the list sorted in ascending order
-    return sorted(file_names)
+    return sorted(file_names_normal) + sorted(file_names_preliminary)
 
 
 # ------------------------------------------------------------------------------
