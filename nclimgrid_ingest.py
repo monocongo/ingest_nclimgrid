@@ -1,93 +1,66 @@
 import argparse
 from datetime import date, datetime
-from glob import glob
+import ftplib
 import logging
 import multiprocessing
 import os
-import re
-import subprocess
-import sys
+import shutil
+import tarfile
 import tempfile
 from typing import Dict, List
 
-import netCDF4
 import numpy as np
 import pandas as pd
 import xarray as xr
 
+# ------------------------------------------------------------------------------
+# FTP locations at NCEI
+_NCLIMGRID_FTP_URL = "ftp.ncdc.noaa.gov"
+_NCLIMGRID_FTP_DIR = "pub/data/climgrid"
+
+# ------------------------------------------------------------------------------
 # set up a basic, global logger
 logging.basicConfig(level=logging.INFO,
-                    format='%(asctime)s %(levelname)s %(message)s',
-                    datefmt='%Y-%m-%d  %H:%M:%S')
+                    format="%(asctime)s %(levelname)s %(message)s",
+                    datefmt="%Y-%m-%d  %H:%M:%S")
 logger = logging.getLogger(__name__)
 
 
 # ------------------------------------------------------------------------------
-def find_files_within_range(directory,
-                            initial_year_month,
-                            final_year_month):
-    """
-    This function finds all the nClimGrid ASCII files in a specifed directory
-    which have file names corresponding to the specified date range. The nClimGrid
-    ASCII files are expected to have the form YYYYMM.pnt, for example 201009.pnt
-    for September of 2010.
-
-    :param directory: directory under which the nClimGrid raw ASCII files should
-        be found
-    :param initial_year_month: string containing six digits representing a year
-        and month, ex. 197501 for January of 1975
-    :param final_year_month: string containing six digits representing a year
-        and month, ex. 197501 for January of 1975
-    :return: list of files within the specified date range specified by the
-        initial and final (year/month) dates, sorted in chronologically
-        ascending order
-    :rtype: list of strings
-    """
-    matching_files = []
-    valid_range = range(initial_year_month, final_year_month + 1)
-    regex = re.compile('.*(\d{6})\.pnt')
-
-    # get a list of all *.pnt files in the specified directory
-    ascii_files = glob('/'.join([directory, '*.pnt']))
-
-    # add all files to our list of matching files if it matches
-    # the pattern and the date part of the filename is within range
-    for ascii_file in ascii_files:
-        if regex.match(ascii_file) and (int(ascii_file[-10:-4]) in valid_range):
-            matching_files.append(ascii_file)
-
-    # return the files sorted in ascending order
-    return sorted(matching_files)
-
-
-# ------------------------------------------------------------------------------
-def find_urls_within_range(
+def find_files_within_range(
         year_month_initial: str,
         year_month_final: str,
 ) -> List[str]:
+    """
 
-    # get list of files under ftp://ftp.ncdc.noaa.gov/pub/data/climgrid/
-    import ftplib
-    ftp_url = "ftp.ncdc.noaa.gov"
-    climgrid_dir = "pub/data/climgrid"
-    ftp = ftplib.FTP(ftp_url)
+    :param year_month_initial:
+    :param year_month_final:
+    :return:
+    """
+
+    # get the list of files under ftp://ftp.ncdc.noaa.gov/pub/data/climgrid/
+    ftp = ftplib.FTP(_NCLIMGRID_FTP_URL)
     ftp.login("anonymous", "ftplib-example")
-    ftp.cwd(climgrid_dir)
+    ftp.cwd(_NCLIMGRID_FTP_DIR)
     data = []
     ftp.dir(data.append)
     ftp.quit()
 
+    # get all the file names that fall within the data range
     file_names = []
     for line in data:
         parts = line.split()
         file_name = parts[-1]
-        if file_name.startswith("nClimGrid_v1.0_monthly") \
+        if file_name.startswith("nClimGrid_v1.0") \
                 and file_name.endswith(".tar.gz"):
-            year_month = int(file_name[23:29])
+            year_month = int(file_name[-23:-17])
             if (year_month >= int(year_month_initial)) \
                 and (year_month <= int(year_month_final)):
                 file_names.append(file_name)
-    return file_names
+
+    # return the list sorted in ascending order
+    return sorted(file_names)
+
 
 # ------------------------------------------------------------------------------
 # TODO extract this out into a netCDF utilities module, as it's
@@ -151,7 +124,7 @@ def get_coordinate_values(ascii_file):
         pd.read_csv(
             ascii_file,
             delim_whitespace=True,
-            names=['lat', 'lon', 'value'],
+            names=["lat", "lon", "value"],
         )
 
     # successive lats and lons are separated by 1/24th of a degree (regular grid)
@@ -163,8 +136,8 @@ def get_coordinate_values(ascii_file):
 
     # create lat and lon index columns corresponding to the dataframe's lat and
     # lon values the index starts at the minimum, i.e. lat_index[0] == min_lat
-    data_frame['lat_index'] = (round((data_frame.lat - min_lat) / increment)).astype(int)
-    data_frame['lon_index'] = (round((data_frame.lon - min_lon) / increment)).astype(int)
+    data_frame["lat_index"] = (round((data_frame.lat - min_lat) / increment)).astype(int)
+    data_frame["lon_index"] = (round((data_frame.lon - min_lon) / increment)).astype(int)
 
     # the lat|lon indices start at zero so the number
     # of lats|lons is the length of the index plus one
@@ -196,358 +169,234 @@ def get_variable_attributes(var_name):
     # initialize the attributes dictionary with values
     # applicable to all supported variable names
     attributes = {
-        'coordinates': 'time lat lon',
-        'references': 'GHCN-Monthly Version 3 (Vose et al. 2011), NCEI/NOAA, https://www.ncdc.noaa.gov/ghcnm/v3.php',
+        "coordinates": "time lat lon",
+        "references": "GHCN-Monthly Version 3 (Vose et al. 2011), NCEI/NOAA, https://www.ncdc.noaa.gov/ghcnm/v3.php",
     }
 
     # flesh out additional attributes, based on the variable type
-    if var_name == 'prcp':
-        attributes['long_name'] = 'Precipitation, monthly total'
-        attributes['standard_name'] = 'precipitation_amount'
-        attributes['units'] = 'millimeter'
-        attributes['valid_min'] = np.float32(0.0)
-        attributes['valid_max'] = np.float32(2000.0)
+    if var_name == "prcp":
+        attributes["long_name"] = "Precipitation, monthly total"
+        attributes["standard_name"] = "precipitation_amount"
+        attributes["units"] = "millimeter"
+        attributes["valid_min"] = np.float32(0.0)
+        attributes["valid_max"] = np.float32(2000.0)
     else:
-        attributes['standard_name'] = 'air_temperature'
-        attributes['units'] = 'degree_Celsius'
-        attributes['valid_min'] = np.float32(-100.0)
-        attributes['valid_max'] = np.float32(100.0)
-        if var_name == 'tavg':
-            attributes['long_name'] = 'Temperature, monthly average of daily averages'
-        elif var_name == 'tmax':
-            attributes['long_name'] = 'Temperature, monthly average of daily maximums'
-        elif var_name == 'tmin':
-            attributes['long_name'] = 'Temperature, monthly average of daily minimums'
+        attributes["standard_name"] = "air_temperature"
+        attributes["units"] = "degree_Celsius"
+        attributes["valid_min"] = np.float32(-100.0)
+        attributes["valid_max"] = np.float32(100.0)
+        if var_name == "tavg":
+            attributes["long_name"] = "Temperature, monthly average of daily averages"
+        elif var_name == "tmax":
+            attributes["long_name"] = "Temperature, monthly average of daily maximums"
+        elif var_name == "tmin":
+            attributes["long_name"] = "Temperature, monthly average of daily minimums"
         else:
-            raise ValueError('The variable_name argument \"{}\" is unsupported.'.format(var_name))
+            raise ValueError(f"The variable_name argument \"{var_name}\" is unsupported.")
 
     return attributes
 
 
 # ------------------------------------------------------------------------------
-def build_netcdf(
-        ascii_files,
-        netcdf_file,
-        var_name: str,
-):
-    """
-    This function builds a NetCDF file for a nClimGrid dataset defined by a set
-    of ASCII files. The list of ASCII files is assumed to be sorted in ascending
-    order with the first file representing the first time step.
+def download_var_ascii(
+        dest_dir: str,
+        source_file_name: str,
+        var_name,
+) -> str:
 
-    :param ascii_files: a list nClimGrid ASCII files for a single variable dataset
-    :param netcdf_file: the NetCDF file (full path) to create and build out from
-        the data contained in the ASCII files
-    :param var_name: name of the variable, supported variables are 'prcp',
-        'tavg', 'tmin' and 'tmax'
-    :rtype: None
-    """
+    with tempfile.TemporaryDirectory() as download_dir:
 
-    # get the start/end months/years from the initial/final file names in the list,
-    # which is assumed to be sorted in ascending order, and file names are assumed
-    # to be in the format <YYYYMM>.pnt, eg. "201004.pnt" for April 2010
-    initial_year = int(ascii_files[0][-10:-6])
-    initial_month = int(ascii_files[0][-6:-4])
+        # download the GZIP file from NCEI
+        ftp = ftplib.FTP(_NCLIMGRID_FTP_URL)
+        ftp.login("anonymous", "ftplib-example")
+        ftp.cwd(_NCLIMGRID_FTP_DIR)
+        destination_path = os.path.join(download_dir, source_file_name)
+        ftp.retrbinary("RETR " + source_file_name, open(destination_path, "wb").write)
+        ftp.quit()
 
-    # use NaN as the fill value for missing data
-    output_fill_value = np.float32(np.NaN)
+        # unzip the GZIP file and get the variable's point (ASCII) file
+        with tarfile.open(destination_path, "r:gz") as tar_file:
+            tar_file.extractall(path=download_dir)
+            for point_file in tar_file.getmembers():
+                if point_file.name.endswith(f"{var_name}.conus.pnt"):
+                    source_file_path = os.path.join(download_dir, point_file.name)
+                    ascii_file_path = os.path.join(dest_dir, point_file.name)
+                    shutil.move(source_file_path, ascii_file_path)
+                    break
 
-    # determine the lat and lon coordinate values by extracting these
-    # from the initial ASCII file in our list (assumes that each ASCII
-    # file contains the same lat/lon coordinates)
-    lat_values, lon_values = get_coordinate_values(ascii_files[0])
-    min_lat = np.float32(min(lat_values))
-    max_lat = np.float32(max(lat_values))
-    min_lon = np.float32(min(lon_values))
-    max_lon = np.float32(max(lon_values))
-    lat_units = 'degrees_north'
-    lon_units = 'degrees_east'
-    total_lats = lat_values.shape[0]
-    total_lons = lon_values.shape[0]
-
-    # build the NetCDF
-    with netCDF4.Dataset(netcdf_file, 'w') as dataset:
-        # create dimensions for a time series, 2-D dataset
-        dataset.createDimension('time', None)
-        dataset.createDimension('lat', total_lats)
-        dataset.createDimension('lon', total_lons)
-
-        # set global group attributes
-        dataset.date_created = str(datetime.now())
-        dataset.date_modified = str(datetime.now())
-        dataset.Conventions = 'CF-1.6, ACDD-1.3'
-        dataset.ncei_template_version = 'NCEI_NetCDF_Grid_Template_v2.0'
-        dataset.title = 'nClimGrid'
-        dataset.naming_authority = 'gov.noaa.ncei'
-        dataset.standard_name_vocabulary = 'Standard Name Table v35'
-        dataset.institution = 'National Centers for Environmental Information (NCEI), NOAA, Department of Commerce'
-        dataset.geospatial_lat_min = min_lat
-        dataset.geospatial_lat_max = max_lat
-        dataset.geospatial_lon_min = min_lon
-        dataset.geospatial_lon_max = max_lon
-        dataset.geospatial_lat_units = lat_units
-        dataset.geospatial_lon_units = lon_units
-
-        # create a time coordinate variable with one
-        # increment per month of the period of record
-        start_year = 1800
-        total_timesteps = len(ascii_files)
-        chunk_sizes = [total_timesteps]
-        time_variable = dataset.createVariable('time', 'i4', ('time',), chunksizes=chunk_sizes)
-        time_variable[:] = compute_days(initial_year, initial_month, total_timesteps, start_year)
-        time_variable.long_name = 'Time, in monthly increments'
-        time_variable.standard_name = 'time'
-        time_variable.calendar = 'gregorian'
-        time_variable.units = 'days since ' + str(start_year) + '-01-01 00:00:00'
-        time_variable.axis = 'T'
-
-        # create the lat coordinate variable
-        lat_variable = dataset.createVariable('lat', 'f4', ('lat',))
-        lat_variable.standard_name = 'latitude'
-        lat_variable.long_name = 'Latitude'
-        lat_variable.units = lat_units
-        lat_variable.axis = 'Y'
-        lat_variable.valid_min = min_lat  # - 0.0001
-        lat_variable.valid_max = max_lat  # + 0.0001
-        lat_variable.units = lat_units
-        lat_variable[:] = lat_values
-
-        # create the lon coordinate variable
-        lon_variable = dataset.createVariable('lon', 'f4', ('lon',))
-        lon_variable.standard_name = 'longitude'
-        lon_variable.long_name = 'Longitude'
-        lon_variable.units = lon_units
-        lon_variable.axis = 'X'
-        lon_variable.valid_min = min_lon
-        lon_variable.valid_max = max_lon
-        lon_variable.units = lon_units
-        lon_variable[:] = lon_values
-
-        # create the data variable
-        variable = dataset.createVariable(var_name,
-                                          'f4',
-                                          ('time', 'lat', 'lon'),
-                                          fill_value=output_fill_value,
-                                          zlib=True,
-                                          least_significant_digit=3)
-
-        # set the variable's attributes
-        variable.setncatts(get_variable_attributes(var_name))
-
-        # array to contain variable data values
-        variable_data = \
-            np.full(
-                (time_variable.shape[0], total_lats, total_lons),
-                output_fill_value,
-                dtype=np.float32,
-            )
-
-        # loop over the ASCII files in order to build the variable's data array
-        for time_index, ascii_file in enumerate(ascii_files):
-            # create a dataframe from the file
-            data_frame = \
-                pd.read_csv(
-                    ascii_file,
-                    delim_whitespace=True,
-                    names=['lat', 'lon', 'value'],
-                )
-
-            # successive lats and lons are separated by 1/24th of a degree (regular grid)
-            increment = 1 / 24.
-
-            # create lat and lon index columns corresponding to
-            # the dataframe's lat and lon values, with the index
-            # starting at the minimum, i.e. lat_index[0] == min_lat
-            data_frame['lat_index'] = (round((data_frame.lat - min_lat) / increment)).astype(int)
-            data_frame['lon_index'] = (round((data_frame.lon - min_lon) / increment)).astype(int)
-
-            # fill the data array with data values, using the lat|lon indices
-            variable_data[time_index, data_frame['lat_index'], data_frame['lon_index']] = data_frame['value']
-
-        # assign the data array to the data variable
-        variable[:] = variable_data
-
-    logger.info(f'NetCDF file created successfully for variable \"{var_name}\": {netcdf_file}')
+    return ascii_file_path
 
 
 # ------------------------------------------------------------------------------
-def join_base_with_incremental(base_file,
-                               incremental_file,
-                               joined_file):
-    """
-    This function concatenates base and incremental NetCDF files into an
-    (assumed to be) contiguous period joined file.
+def download_template_ascii(
+        ascii_dir: str,
+        source_file_name: str,
+) -> str:
 
-    The original base and incremental files that are joined will be left in place
-    (any clean up of these files is assumed to be handled outside of this function).
-
-    :param base_file:
-    :param incremental_file:
-    :param joined_file:
-    """
-
-    logger.info(
-        f'Joining the base file {base_file} with the incremental '
-        f'file {incremental_file} to create the joined/contiguous '
-        f'result file {joined_file}',
-    )
-
-    # set up the various parts of the NCO command we'll use,
-    # for this, based on whether a Linux or Windows environment
-    # TODO replace with pynco equivalent(s)
-    ncrcat_command = 'ncrcat'
-    if (sys.platform == 'linux') or (sys.platform == 'linux2'):
-        nco_home = '/home/james.adams/anaconda3/bin'
-    else:  # assume Windows (testing and development)
-        nco_home = 'C:/nco'
-        windows_suffix = '.exe --no_tmp_fl'
-        ncrcat_command += windows_suffix
-
-    # get the proper executable path for the NCO command that'll be used to perform the concatenation operation
-    normalized_executable_path = os.path.normpath(nco_home)
-    ncrcat = os.path.join(os.sep, normalized_executable_path, ncrcat_command)
-
-    # build and run the command used to concatenate the two files into a single NetCDF
-    concatenate_command = \
-        ncrcat + ' -O -h -D 0 ' + base_file + ' ' + incremental_file + ' ' + joined_file
-    logger.info(f'NCO concatenation command:   {concatenate_command}')
-    subprocess.call(concatenate_command, shell=True)
+    # get the precipitation point (ASCII) file from the GZIP source file
+    return download_var_ascii(ascii_dir, source_file_name, "prcp")
 
 
 # ------------------------------------------------------------------------------
-def ingest_nclimgrid_dataset(parameters):
-    """
-    This function creates a NetCDF for the full period of record of an nClimGrid
-    dataset.
-
-    :param parameters: dictionary containing all required parameters, used
-        instead of individual parameters since this function will be called
-        from a process pool mapping which requires a single function argument
-    """
-
-    # TODO add a temporary directory and download files from NCEI FTP locations
-
-    try:
-        # determine the input directory containing the ASCII files for the variable based on the variable's name
-        if parameters['variable_name'] == 'prcp':
-            input_directory = '/gcad/nclimdiv/us/por/prcp/pnt'
-        elif parameters['variable_name'] == 'tavg':
-            input_directory = '/gcad/nclimdiv/us/por/tave/pnt'
-        elif parameters['variable_name'] == 'tmax':
-            input_directory = '/gcad/nclimdiv/us/por/tmax/pnt'
-        elif parameters['variable_name'] == 'tmin':
-            input_directory = '/gcad/nclimdiv/us/por/tmin/pnt'
-        else:
-            raise ValueError(
-                'The variable_name argument '
-                f'\"{parameters["variable_name"]}\" is unsupported.',
-            )
-
-        logger.info(
-            f'Ingesting ASCII files for variable \"{parameters["variable_name"]}\"'
-            f' from directory {input_directory}',
-        )
-
-        # find the files matching to the base and incremental
-        base_ascii_files = \
-            find_files_within_range(
-                input_directory,
-                int(parameters['base_start']),
-                int(parameters['base_end']),
-            )
-        incremental_ascii_files = \
-            find_files_within_range(
-                input_directory,
-                int(parameters['incremental_start']),
-                int(parameters['incremental_end']),
-            )
-
-        # create the file names for the various output NetCDFs we'll create
-        # TODO also get the base filename (eg. currently 'nclimgrid')
-        #  as a parameter from command line argument
-        base_netcdf_file = \
-            parameters['storage_dir'] + '/nclimgrid_' + \
-            parameters['base_start'] + '_' + \
-            parameters['base_end'] + '_' + \
-            parameters['variable_name'] + '.nc'
-        incremental_netcdf_file = \
-            parameters['storage_dir'] + '/nclimgrid_' + \
-            parameters['incremental_start'] + '_' + \
-            parameters['incremental_end'] + '_' + \
-            parameters['variable_name'] + '.nc'
-        destination_netcdf_file = \
-            parameters['dest_dir'] + '/nclimgrid_' + \
-            parameters['variable_name'] + '.nc'
-
-        # make sure the base file is present, if not then we'll
-        # recreate it as we would during January's ingest
-        if (parameters['current_month'] == 1) or not os.path.isfile(base_netcdf_file):
-            logger.info(
-                f'Building the {parameters["variable_name"]} NetCDF for base '
-                f'period [{parameters["base_start"]} through {parameters["base_end"]}]',
-            )
-
-            # create the base period NetCDF
-            build_netcdf(
-                base_ascii_files,
-                base_netcdf_file,
-                parameters['variable_name'],
-            )
-
-            logger.info(
-                f'Completed building the {parameters["variable_name"]} '
-                f'NetCDF for base period, result file:  {base_netcdf_file}',
-            )
-
-        logger.info(
-            f'Building the {parameters["variable_name"]} NetCDF for the '
-            f'incremental period [{parameters["incremental_start"]} '
-            f'through {parameters["incremental_end"]}]',
-        )
-
-        # create the incremental period NetCDF
-        build_netcdf(incremental_ascii_files, incremental_netcdf_file, parameters['variable_name'])
-
-        logger.info('Completed building the {0} NetCDF for incremental period, result file:  {1}'.format(
-            parameters['variable_name'],
-            incremental_netcdf_file))
-
-        # append the incremental file to the base file resulting in the final "destination" file
-        join_base_with_incremental(base_netcdf_file, incremental_netcdf_file, destination_netcdf_file)
-
-        logger.info(
-            'Completed ingest for variable \"{0}\":  result NetCDF file: {1}'.format(parameters['variable_name'],
-                                                                                     destination_netcdf_file))
-
-    except:
-        # catch all exceptions, log rudimentary error information
-        logger.error('Failed to complete', exc_info=True)
-        raise
-
-
-# ------------------------------------------------------------------------------
-def allocate_dataset(
+def initialize_dataset(
         template_file_name: str,
+        var_name: str,
         year_start: int,
         month_start: int,
         year_end: int,
         month_end: int,
 ) -> xr.Dataset:
+    """
 
-    # calculate the time coordinate's dimension
-    total_months = ((year_end - year_start) * 12) + month_end - month_start
+    :param template_file_name:
+    :param var_name:
+    :param year_start:
+    :param month_start:
+    :param year_end:
+    :param month_end:
+    :return:
+    """
 
-    pass
+    # use a temporary directory for downloading the ASCII file to use as a template
+    with tempfile.TemporaryDirectory() as work_dir:
+
+        # determine the lat and lon coordinate values by extracting these
+        # from the initial ASCII file in our list (assumes that each ASCII
+        # file contains the same lat/lon coordinates)
+        template_ascii_file_path = download_template_ascii(work_dir, template_file_name)
+        lat_values, lon_values = get_coordinate_values(template_ascii_file_path)
+
+    min_lat = np.float32(min(lat_values))
+    max_lat = np.float32(max(lat_values))
+    min_lon = np.float32(min(lon_values))
+    max_lon = np.float32(max(lon_values))
+    lat_units = "degrees_north"
+    lon_units = "degrees_east"
+    total_lats = lat_values.shape[0]
+    total_lons = lon_values.shape[0]
+
+    # set global group attributes
+    global_attributes = {
+        "date_created": str(datetime.now()),
+        "date_modified": str(datetime.now()),
+        "Conventions": "CF-1.6, ACDD-1.3",
+        "ncei_template_version": "NCEI_NetCDF_Grid_Template_v2.0",
+        "title": "nClimGrid (monthly)",
+        "naming_authority": "gov.noaa.ncei",
+        "standard_name_vocabulary": "Standard Name Table v35",
+        "institution": "National Centers for Environmental Information (NCEI), NOAA, Department of Commerce",
+        "geospatial_lat_min": min_lat,
+        "geospatial_lat_max": max_lat,
+        "geospatial_lon_min": min_lon,
+        "geospatial_lon_max": max_lon,
+        "geospatial_lat_units": lat_units,
+        "geospatial_lon_units": lon_units,
+    }
+
+    # create a time coordinate variable with one
+    # increment per month of the period of record
+    time_units_start_year = 1800
+    total_months = ((year_end - year_start) * 12) + month_end - month_start + 1
+    time_values = compute_days(year_start, month_start, total_months, time_units_start_year)
+    time_attributes = {
+        "long_name": "Time, in monthly increments",
+        "standard_name": "time",
+        "calendar" : "gregorian",
+        "units": f"days since {time_units_start_year}-01-01 00:00:00",
+        "axis": "T",
+    }
+    time_variable = xr.Variable(dims="time", data=time_values, attrs=time_attributes)
+
+    # create the lat coordinate variable
+    lat_attributes = {
+        "standard_name": "latitude",
+        "long_name": "Latitude",
+        "units": lat_units,
+        "axis": "Y",
+        "valid_min": min_lat,
+        "valid_max": max_lat,
+    }
+    lat_variable = xr.Variable(dims="lat", data=lat_values, attrs=lat_attributes)
+
+    # create the lon coordinate variable
+    lon_attributes = {
+        "standard_name": "longitude",
+        "long_name": "Longitude",
+        "units": lon_units,
+        "axis": "X",
+        "valid_min": min_lon,
+        "valid_max": max_lon,
+    }
+    lon_variable = xr.Variable(dims="lon", data=lon_values, attrs=lon_attributes)
+
+    # create the data variable's array
+    variable_data = \
+        np.full(
+            (time_variable.shape[0], total_lats, total_lons),
+            fill_value=np.float32(np.NaN),
+            dtype=np.float32,
+        )
+    coordinates = {
+        "time": time_variable,
+        "lat": lat_variable,
+        "lon": lon_variable,
+    }
+    data_array = \
+        xr.DataArray(
+            data=variable_data,
+            coords=coordinates,
+            dims=["time", "lat", "lon"],
+            name=var_name,
+            attrs=get_variable_attributes(var_name),
+        )
+
+    # package it all as an xarray.Dataset
+    dataset = \
+        xr.Dataset(
+            data_vars={var_name: data_array},
+            coords=coordinates,
+            attrs=global_attributes,
+        )
+
+    return dataset
 
 
 # ------------------------------------------------------------------------------
 def download_data(
-        work_directory: str,
         file_name: str,
         var_name: str,
-):
+        min_lat: float,
+        min_lon: float,
+        total_lats: int,
+        total_lons: int,
+) -> np.ndarray:
 
-    pass
+    with tempfile.TemporaryDirectory() as work_directory:
+
+        # get the ASCII file we need for the nClimGrid variable
+        ascii_file = download_var_ascii(work_directory, file_name, var_name)
+
+        # create a Pandas DataFrame from the file
+        df = pd.read_csv(ascii_file, delim_whitespace=True, names=["lat", "lon", "value"])
+
+    # successive lats and lons are separated by 1/24th of a degree (regular grid)
+    increment = 1 / 24.
+
+    # create lat and lon index columns corresponding to
+    # the dataframe's lat and lon values, with the index
+    # starting at the minimum, i.e. lat_index[0] == min_lat
+    df["lat_index"] = (round((df.lat - min_lat) / increment)).astype(int)
+    df["lon_index"] = (round((df.lon - min_lon) / increment)).astype(int)
+
+    # allocate the numpy array we'll fill and return
+    grid_shape = (total_lats, total_lons)
+    variable_data = np.full(grid_shape, np.NaN, dtype=np.float32)
+
+    # fill the data array with data values, using the
+    # lat/lon indices to easily account for missing points
+    variable_data[df["lat_index"], df["lon_index"]] = df["value"]
+
+    return variable_data
 
 
 # ------------------------------------------------------------------------------
@@ -555,109 +404,90 @@ def ingest_nclimgrid(
         parameters: Dict,
 ):
 
-    # TODO fix this with something more elegant, keyword arguments or args expansion?
-    dest_dir = parameters["dest_dir"]
-    var_name = parameters["variable_name"]
-    year_start = int(parameters["year_start"])
-    month_start = int(parameters["month_start"])
-    year_end = int(parameters["year_end"])
-    month_end = int(parameters["month_end"])
-
     # find the FTP files within our date range
     year_month_start = parameters["year_start"] + parameters["month_start"]
     year_month_end = parameters["year_end"] + parameters["month_end"]
-    ftp_files_within_range = find_urls_within_range(year_month_start, year_month_end)
+    ftp_files_within_range = find_files_within_range(year_month_start, year_month_end)
 
-    # allocate an xarray.DataSet for the total number of months
+    # initialize the xarray.DataSet
     dataset = \
-        allocate_dataset(
+        initialize_dataset(
             ftp_files_within_range[0],
-            year_start,
-            month_start,
-            year_end,
-            month_end,
+            parameters["var_name"],
+            int(parameters["year_start"]),
+            int(parameters["month_start"]),
+            int(parameters["year_end"]),
+            int(parameters["month_end"]),
         )
 
-    # create a temporary directory under which we'll download the ASCII files
-    with tempfile.TemporaryDirectory() as work_dir:
+    # minimum coordinate values (used for later function calls)
+    min_lat = min(dataset["lat"].data)
+    min_lon = min(dataset["lon"].data)
 
-        # for each month download the data from FTP and convert to a numpy array,
-        # adding it into the xarray dataset at the appropriate index
-        for ftp_file_name in ftp_files_within_range:
+    # for each month download the data from FTP and convert to a numpy array,
+    # adding it into the xarray dataset at the appropriate index
+    for time_step, ftp_file_name in enumerate(ftp_files_within_range):
 
-            # get the values for the month
-            monthly_values = download_data(work_dir, ftp_file_name, var_name)
+        # get the values for the month
+        monthly_values = download_data(ftp_file_name, parameters["var_name"], min_lat, min_lon, len(dataset["lat"]), len(dataset["lon"]))
 
-            # TODO add the monthly calues into the data arrays for each variable
+        # add the monthly values into the data array for the variable
+        dataset[parameters["var_name"]][time_step] = monthly_values
 
     # write the xarray DataSet as NetCDF file into the destination directory
-    file_name = f"nclimgrid_v1.0_{var_name}_{year_month_start}_{year_month_end}.nc"
-    var_file_path = os.path(dest_dir, file_name)
+    file_name = f"nclimgrid_v1.0_{parameters['var_name']}_{year_month_start}_{year_month_end}.nc"
+    var_file_path = os.path.join(parameters["dest_dir"], file_name)
     dataset.to_netcdf(var_file_path)
 
 
 # ------------------------------------------------------------------------------
-if __name__ == '__main__':
+if __name__ == "__main__":
 
-    try:
-        # parse the command line arguments
-        argument_parser = argparse.ArgumentParser()
-        argument_parser.add_argument(
-            "--dest_dir",
-            required=True,
-            help="directory where the final, full time series NetCDF files should be written",
-        )
-        argument_parser.add_argument(
-            "--start",
-            type=str,
-            required=True,
-            help="year/month date at which the dataset should start (inclusive), in 'YYYYMM' format",
-        )
-        argument_parser.add_argument(
-            "--end",
-            type=str,
-            required=True,
-            help="year/month date at which the dataset should end (inclusive), in 'YYYYMM' format",
-        )
-        args = vars(argument_parser.parse_args())
+    # parse the command line arguments
+    argument_parser = argparse.ArgumentParser()
+    argument_parser.add_argument(
+        "--dest_dir",
+        required=True,
+        help="directory where the final, full time series NetCDF files should be written",
+    )
+    argument_parser.add_argument(
+        "--start",
+        type=str,
+        required=True,
+        help="year/month date at which the dataset should start (inclusive), in 'YYYYMM' format",
+    )
+    argument_parser.add_argument(
+        "--end",
+        type=str,
+        required=True,
+        help="year/month date at which the dataset should end (inclusive), in 'YYYYMM' format",
+    )
+    args = vars(argument_parser.parse_args())
 
-        # create an iterable containing dictionaries of parameters, with one
-        # dictionary of parameters per variable, since there will be a separate
-        # ingest process per variable, with each process having its own set
-        # of parameters
-        variables = ['prcp', 'tavg', 'tmin', 'tmax']
-        params_list = []
-        for variable_name in variables:
-            params = {
-                'variable_name': variable_name,
-                'dest_dir': args["dest_dir"],
-                'year_start': int(args["start"][:4]),
-                'year_end': int(args["end"][:4]),
-                'month_start': int(args["start"][4:]),
-                'month_end': int(args["end"][4:]),
-            }
-            params_list.append(params)
+    # create an iterable containing dictionaries of parameters, with one
+    # dictionary of parameters per variable, since there will be a separate
+    # ingest process per variable, with each process having its own set
+    # of parameters
+    variables = ["prcp", "tavg", "tmin", "tmax"]
+    params_list = []
+    for variable_name in variables:
+        params = {
+            "var_name": variable_name,
+            "dest_dir": args["dest_dir"],
+            "year_start": args["start"][:4],
+            "year_end": args["end"][:4],
+            "month_start": args["start"][4:],
+            "month_end": args["end"][4:],
+        }
+        params_list.append(params)
 
-        # create a process pool, mapping the ingest
-        # process to the iterable of parameter lists
-        pool = multiprocessing.Pool(min(len(variables), multiprocessing.cpu_count()))
-        result = pool.map_async(ingest_nclimgrid, params_list)
+    # create a process pool, mapping the ingest
+    # process to the iterable of parameter lists
+    pool = multiprocessing.Pool(min(len(variables), multiprocessing.cpu_count()))
+    result = pool.map_async(ingest_nclimgrid, params_list)
 
-        # get the result exception, if any
-        pool.close()
-        pool.join()
+    # get the result exception, if any
+    pool.close()
+    pool.join()
 
-        # set the permissions (recursively) on the destination directory
-        logger.info(
-            'Changing permissions to 775 on all files under '
-            f'the destination directory: {args.dest_dir}',
-        )
-        for root, dirs, files in os.walk(args.dest_dir):
-            # join the file name with the root directory path, change the permissions
-            for file in files:
-                os.chmod(os.path.join(root, file), 0o775)
-
-    except:
-        # catch all exceptions, log rudimentary error information
-        logger.error('Failed to complete', exc_info=True)
-        raise
+    exit(0)
