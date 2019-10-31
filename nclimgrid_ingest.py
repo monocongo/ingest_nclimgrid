@@ -7,11 +7,13 @@ import os
 import re
 import subprocess
 import sys
-from typing import List
+import tempfile
+from typing import Dict, List
 
 import netCDF4
 import numpy as np
 import pandas as pd
+import xarray as xr
 
 # set up a basic, global logger
 logging.basicConfig(level=logging.INFO,
@@ -406,7 +408,8 @@ def join_base_with_incremental(base_file,
     ncrcat = os.path.join(os.sep, normalized_executable_path, ncrcat_command)
 
     # build and run the command used to concatenate the two files into a single NetCDF
-    concatenate_command = ncrcat + ' -O -h -D 0 ' + base_file + ' ' + incremental_file + ' ' + joined_file
+    concatenate_command = \
+        ncrcat + ' -O -h -D 0 ' + base_file + ' ' + incremental_file + ' ' + joined_file
     logger.info(f'NCO concatenation command:   {concatenate_command}')
     subprocess.call(concatenate_command, shell=True)
 
@@ -523,105 +526,138 @@ def ingest_nclimgrid_dataset(parameters):
 
 
 # ------------------------------------------------------------------------------
+def allocate_dataset(
+        template_file_name: str,
+        year_start: int,
+        month_start: int,
+        year_end: int,
+        month_end: int,
+) -> xr.Dataset:
+
+    # calculate the time coordinate's dimension
+    total_months = ((year_end - year_start) * 12) + month_end - month_start
+
+    pass
+
+
+# ------------------------------------------------------------------------------
+def download_data(
+        work_directory: str,
+        file_name: str,
+        var_name: str,
+):
+
+    pass
+
+
+# ------------------------------------------------------------------------------
+def ingest_nclimgrid(
+        parameters: Dict,
+):
+
+    # TODO fix this with something more elegant, keyword arguments or args expansion?
+    dest_dir = parameters["dest_dir"]
+    var_name = parameters["variable_name"]
+    year_start = int(parameters["year_start"])
+    month_start = int(parameters["month_start"])
+    year_end = int(parameters["year_end"])
+    month_end = int(parameters["month_end"])
+
+    # find the FTP files within our date range
+    year_month_start = parameters["year_start"] + parameters["month_start"]
+    year_month_end = parameters["year_end"] + parameters["month_end"]
+    ftp_files_within_range = find_urls_within_range(year_month_start, year_month_end)
+
+    # allocate an xarray.DataSet for the total number of months
+    dataset = \
+        allocate_dataset(
+            ftp_files_within_range[0],
+            year_start,
+            month_start,
+            year_end,
+            month_end,
+        )
+
+    # create a temporary directory under which we'll download the ASCII files
+    with tempfile.TemporaryDirectory() as work_dir:
+
+        # for each month download the data from FTP and convert to a numpy array,
+        # adding it into the xarray dataset at the appropriate index
+        for ftp_file_name in ftp_files_within_range:
+
+            # get the values for the month
+            monthly_values = download_data(work_dir, ftp_file_name, var_name)
+
+            # TODO add the monthly calues into the data arrays for each variable
+
+    # write the xarray DataSet as NetCDF file into the destination directory
+    file_name = f"nclimgrid_v1.0_{var_name}_{year_month_start}_{year_month_end}.nc"
+    var_file_path = os.path(dest_dir, file_name)
+    dataset.to_netcdf(var_file_path)
+
+
+# ------------------------------------------------------------------------------
 if __name__ == '__main__':
 
-    ftp_urls = find_urls_within_range("201001", "201012")
-    exit(0)
+    try:
+        # parse the command line arguments
+        argument_parser = argparse.ArgumentParser()
+        argument_parser.add_argument(
+            "--dest_dir",
+            required=True,
+            help="directory where the final, full time series NetCDF files should be written",
+        )
+        argument_parser.add_argument(
+            "--start",
+            type=str,
+            required=True,
+            help="year/month date at which the dataset should start (inclusive), in 'YYYYMM' format",
+        )
+        argument_parser.add_argument(
+            "--end",
+            type=str,
+            required=True,
+            help="year/month date at which the dataset should end (inclusive), in 'YYYYMM' format",
+        )
+        args = vars(argument_parser.parse_args())
 
-    # try:
-    #     # parse the command line arguments
-    #     argument_parser = argparse.ArgumentParser()
-    #     argument_parser.add_argument(
-    #         "-d",
-    #         "--dest_dir",
-    #         required=True,
-    #         help="directory where the final, full time series NetCDF should be written",
-    #     )
-    #     argument_parser.add_argument(
-    #         "-s",
-    #         "--storage_dir",
-    #         required=True,
-    #         help="directory where the base and (optionally) incremental NetCDF "
-    #              "files should be stored",
-    #     )
-    #     args = argument_parser.parse_args()
-    #
-    #     # get the current year and month, used to determine
-    #     # the start/end points for the base and incremental periods
-    #     current_year = date.today().year
-    #     current_month = date.today().month
-    #
-    #     # If we're running this code during January then we'll ingest the "base"
-    #     # period of record, i.e. from January 1895 through December of the year
-    #     # which is two years before the current year, as well as the "incremental"
-    #     # period which includes all months after the base period to the previous
-    #     # month. For this initial monthly run of the year the base period files
-    #     # will be cached in the specified storage directory for use with subsequent
-    #     # monthly runs, eliminating the need to reingest that portion of the dataset,
-    #     # since the base period data is guaranteed to be updated only once a year,
-    #     # at the start of each calendar year.
-    #
-    #     # the base period is the start of the dataset up to two years previous
-    #     # (for example during 2014 the base period goes through December 2012)
-    #     # the period of record for GHCN-M, from which nClimGrid was derived,
-    #     # begins January 1895
-    #     base_start = '189501'
-    #     base_end = str(current_year - 2) + '12'
-    #
-    #     # the starting year/month of the incremental period
-    #     # is always January of the previous year
-    #     incremental_start = str(current_year - 1) + '01'
-    #
-    #     # set the incremental period's end point
-    #     if current_month == 1:
-    #
-    #         # the incremental end year/month is the December of the previous year
-    #         incremental_end = str(current_year - 1) + '12'
-    #
-    #     else:
-    #
-    #         # set the incremental end year/month to the previous month of the current year
-    #         incremental_end = str(current_year) + str(current_month - 1).zfill(2)
-    #
-    #     # create an iterable containing dictionaries of parameters, with one
-    #     # dictionary of parameters per variable, since there will be a separate
-    #     # ingest process per variable, with each process having its own set
-    #     # of parameters
-    #     variables = ['prcp', 'tavg', 'tmin', 'tmax']
-    #     params_list = []
-    #     for variable_name in variables:
-    #         params = {
-    #             'current_month': current_month,
-    #             'variable_name': variable_name,
-    #             'storage_dir': args.storage_dir,
-    #             'dest_dir': args.dest_dir,
-    #             'base_start': base_start,
-    #             'base_end': base_end,
-    #             'incremental_start': incremental_start,
-    #             'incremental_end': incremental_end,
-    #         }
-    #         params_list.append(params)
-    #
-    #     # create a process pool, mapping the ingest
-    #     # process to the iterable of parameter lists
-    #     pool = multiprocessing.Pool(min(len(variables), multiprocessing.cpu_count()))
-    #     result = pool.map_async(ingest_nclimgrid_dataset, params_list)
-    #
-    #     # get the result exception, if any
-    #     pool.close()
-    #     pool.join()
-    #
-    #     # set the permissions (recursively) on the destination directory
-    #     logger.info(
-    #         'Changing permissions to 775 on all files under '
-    #         f'the destination directory: {args.dest_dir}',
-    #     )
-    #     for root, dirs, files in os.walk(args.dest_dir):
-    #         # join the file name with the root directory path, change the permissions
-    #         for file in files:
-    #             os.chmod(os.path.join(root, file), 0o775)
-    #
-    # except:
-    #     # catch all exceptions, log rudimentary error information
-    #     logger.error('Failed to complete', exc_info=True)
-    #     raise
+        # create an iterable containing dictionaries of parameters, with one
+        # dictionary of parameters per variable, since there will be a separate
+        # ingest process per variable, with each process having its own set
+        # of parameters
+        variables = ['prcp', 'tavg', 'tmin', 'tmax']
+        params_list = []
+        for variable_name in variables:
+            params = {
+                'variable_name': variable_name,
+                'dest_dir': args["dest_dir"],
+                'year_start': int(args["start"][:4]),
+                'year_end': int(args["end"][:4]),
+                'month_start': int(args["start"][4:]),
+                'month_end': int(args["end"][4:]),
+            }
+            params_list.append(params)
+
+        # create a process pool, mapping the ingest
+        # process to the iterable of parameter lists
+        pool = multiprocessing.Pool(min(len(variables), multiprocessing.cpu_count()))
+        result = pool.map_async(ingest_nclimgrid, params_list)
+
+        # get the result exception, if any
+        pool.close()
+        pool.join()
+
+        # set the permissions (recursively) on the destination directory
+        logger.info(
+            'Changing permissions to 775 on all files under '
+            f'the destination directory: {args.dest_dir}',
+        )
+        for root, dirs, files in os.walk(args.dest_dir):
+            # join the file name with the root directory path, change the permissions
+            for file in files:
+                os.chmod(os.path.join(root, file), 0o775)
+
+    except:
+        # catch all exceptions, log rudimentary error information
+        logger.error('Failed to complete', exc_info=True)
+        raise
