@@ -1,5 +1,5 @@
 import argparse
-from datetime import date, datetime
+from datetime import datetime
 import ftplib
 import logging
 import multiprocessing
@@ -56,13 +56,13 @@ def find_files_within_range(
                 and file_name.endswith(".tar.gz"):
             year_month = int(file_name[-23:-17])
             if (year_month >= int(year_month_initial)) \
-                and (year_month <= int(year_month_final)):
+                    and (year_month <= int(year_month_final)):
                 file_names_normal.append(file_name)
         elif file_name.startswith("nClimGrid_v1.0-preliminary") \
                 and file_name.endswith(".tar.gz"):
             year_month = int(file_name[-23:-17])
             if (year_month >= int(year_month_initial)) \
-                and (year_month <= int(year_month_final)):
+                    and (year_month <= int(year_month_final)):
                 file_names_preliminary.append(file_name)
 
     # return the list sorted in ascending order
@@ -316,7 +316,7 @@ def initialize_dataset(
     time_attributes = {
         "long_name": "Time, in monthly increments",
         "standard_name": "time",
-        "calendar" : "gregorian",
+        "calendar": "gregorian",
         "units": f"days since {time_units_start_year}-01-01 00:00:00",
         "axis": "T",
     }
@@ -396,8 +396,6 @@ def download_data(
     :return:
     """
 
-    logger.info(f"Downloading {var_name} variable data from file {file_name}")
-
     # allocate the numpy array we'll fill and return
     grid_shape = (total_lats, total_lons)
     variable_data = np.full(grid_shape, np.NaN, dtype=np.float32)
@@ -440,13 +438,13 @@ def download_data(
 
 # ------------------------------------------------------------------------------
 def ingest_nclimgrid(
-        params: Dict,
+        arguments: Dict,
 ) -> str:
     """
     Ingests one of the four nClimGrid variables into a NetCDF for a specified
     date range.
 
-    :param params: dictionary of parameter values
+    :param arguments: dictionary of argument values
          dest_dir: directory where NetCDF file should be written
          var_name: name of variable, "prcp", "tmin", "tmax", or "tave"
          date_start: starting year and month of date range (inclusive), with format "YYYYMM"
@@ -457,22 +455,22 @@ def ingest_nclimgrid(
     """
 
     logger.info(
-        f"Ingesting nClimGrid data for variable {params['var_name']} "
-        f"and date range {params['date_start']} - {params['date_end']}",
+        f"Ingesting nClimGrid data for variable {arguments['var_name']} "
+        f"and date range {arguments['date_start']} - {arguments['date_end']}",
     )
 
     # find the FTP files within our date range
-    ftp_files_within_range = find_files_within_range(params["date_start"], params["date_end"])
+    ftp_files_within_range = find_files_within_range(arguments["date_start"], arguments["date_end"])
 
     # initialize the xarray.DataSet
     dataset = \
         initialize_dataset(
             ftp_files_within_range[0],
-            params["var_name"],
-            int(params["date_start"][:4]),
-            int(params["date_start"][4:]),
-            int(params["date_end"][:4]),
-            int(params["date_end"][4:]),
+            arguments["var_name"],
+            int(arguments["date_start"][:4]),
+            int(arguments["date_start"][4:]),
+            int(arguments["date_end"][:4]),
+            int(arguments["date_end"][4:]),
         )
 
     # minimum coordinate values (used for later function calls)
@@ -487,7 +485,7 @@ def ingest_nclimgrid(
         monthly_values = \
             download_data(
                 ftp_file_name,
-                params["var_name"],
+                arguments["var_name"],
                 min_lat,
                 min_lon,
                 len(dataset["lat"]),
@@ -495,13 +493,13 @@ def ingest_nclimgrid(
             )
 
         # add the monthly values into the data array for the variable
-        dataset[params["var_name"]][time_step] = monthly_values
+        dataset[arguments["var_name"]][time_step] = monthly_values
 
     # write the xarray DataSet as NetCDF file into the destination directory
     file_name = \
-        f"nclimgrid_v1.0_{params['var_name']}_"\
-        f"{params['date_start']}_{params['date_end']}.nc"
-    var_file_path = os.path.join(params["dest_dir"], file_name)
+        f"nclimgrid_v1.0_{arguments['var_name']}_"\
+        f"{arguments['date_start']}_{arguments['date_end']}.nc"
+    var_file_path = os.path.join(arguments["dest_dir"], file_name)
     logger.info(f"Writing nClimGrid NetCDF {var_file_path}")
     dataset.to_netcdf(var_file_path)
 
