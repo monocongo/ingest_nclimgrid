@@ -163,7 +163,7 @@ def get_coordinate_values(ascii_file):
 def get_variable_attributes(var_name):
     """
     This function builds a dictionary of variable attributes based on the
-    variable name. Four variable names are supported: 'prcp', 'tavg', 'tmin',
+    variable name. Four variable names are supported: 'prcp', 'tave', 'tmin',
     and 'tmax'.
 
     :param var_name:
@@ -192,7 +192,7 @@ def get_variable_attributes(var_name):
         attributes["units"] = "degree_Celsius"
         attributes["valid_min"] = np.float32(-100.0)
         attributes["valid_max"] = np.float32(100.0)
-        if var_name == "tavg":
+        if var_name == "tave":
             attributes["long_name"] = "Temperature, monthly average of daily averages"
         elif var_name == "tmax":
             attributes["long_name"] = "Temperature, monthly average of daily maximums"
@@ -448,7 +448,7 @@ def ingest_nclimgrid(
 
     :param params: dictionary of parameter values
          dest_dir: directory where NetCDF file should be written
-         var_name: name of variable, "prcp", "tmin", "tmax", or "tavg"
+         var_name: name of variable, "prcp", "tmin", "tmax", or "tave"
          date_start: starting year and month of date range (inclusive), with format "YYYYMM"
          month_start: starting month of date range (inclusive)
          year_end: ending year of date range (inclusive)
