@@ -528,14 +528,25 @@ if __name__ == "__main__":
         required=True,
         help="year/month date at which the dataset should end (inclusive), in 'YYYYMM' format",
     )
+    argument_parser.add_argument(
+        "--var",
+        type=str,
+        required=False,
+        default="all",
+        choices=["all", "prcp", "tave", "tmin", "tmax"],
+        help="single variable to be ingested (if omitted then all four "
+             "nClimGrid variables will be ingested)",
+    )
     args = vars(argument_parser.parse_args())
 
     # create an iterable containing dictionaries of parameters, with one
     # dictionary of parameters per variable, since there will be a separate
     # ingest process per variable, with each process having its own set
     # of parameters
-    variables = ["prcp", "tave", "tmin", "tmax"]
-    params_list = []
+    if args["var"] == "all":
+        variables = ["prcp", "tave", "tmin", "tmax"]
+    else:
+        variables = [args["var"]]
     for variable_name in variables:
         ingest_nclimgrid(
             variable_name,
