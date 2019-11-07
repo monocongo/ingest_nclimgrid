@@ -39,12 +39,13 @@ def find_files_within_range(
     """
 
     # get the list of files under ftp://ftp.ncdc.noaa.gov/pub/data/climgrid/
-    ftp = ftplib.FTP(_NCLIMGRID_FTP_URL)
-    ftp.login("anonymous", "ftplib-example")
-    ftp.cwd(_NCLIMGRID_FTP_DIR)
-    data = []
-    ftp.dir(data.append)
-    ftp.quit()
+    # ftp = ftplib.FTP(_NCLIMGRID_FTP_URL)
+    with ftplib.FTP(host=_NCLIMGRID_FTP_URL) as ftp:
+        ftp.login("anonymous", "ftplib-example")
+        ftp.cwd(_NCLIMGRID_FTP_DIR)
+        data = []
+        ftp.dir(data.append)
+    # ftp.quit()
 
     # get all the file names that fall within the data range
     file_names_normal = []
@@ -448,19 +449,25 @@ def ingest_nclimgrid(
          dest_dir: directory where NetCDF file should be written
          var_name: name of variable, "prcp", "tmin", "tmax", or "tave"
          date_start: starting year and month of date range (inclusive), with format "YYYYMM"
-         month_start: starting month of date range (inclusive)
-         year_end: ending year of date range (inclusive)
-         month_end: ending month of date range (inclusive)
+         date_end: ending year and month of date range (inclusive), with format "YYYYMM"
     :return:
     """
 
     logger.info(
-        f"Ingesting nClimGrid data for variable {arguments['var_name']} "
+        f"Ingesting nClimGrid data for variable '{arguments['var_name']}' "
         f"and date range {arguments['date_start']} - {arguments['date_end']}",
     )
 
     # find the FTP files within our date range
-    ftp_files_within_range = find_files_within_range(arguments["date_start"], arguments["date_end"])
+    try:
+        ftp_files_within_range = \
+            find_files_within_range(
+                arguments["date_start"],
+                arguments["date_end"],
+            )
+    except Exception as ex:
+        logger.error(f"Failed to get files for variable '{arguments['var_name']}'", ex)
+        raise ex
 
     # initialize the xarray.DataSet
     dataset = \
@@ -472,6 +479,8 @@ def ingest_nclimgrid(
             int(arguments["date_end"][:4]),
             int(arguments["date_end"][4:]),
         )
+
+    # logger.info(f"Dataset for variable '{arguments['var_name']}': {dataset}")
 
     # minimum coordinate values (used for later function calls)
     min_lat = min(dataset["lat"].data)
@@ -543,15 +552,18 @@ if __name__ == "__main__":
             "date_start": args["start"],
             "date_end": args["end"],
         }
-        params_list.append(params)
-
-    # create a process pool, mapping the ingest
-    # process to the iterable of parameter lists
-    pool = multiprocessing.Pool(min(len(variables), multiprocessing.cpu_count()))
-    result = pool.map_async(ingest_nclimgrid, params_list)
-
-    # get the result exception, if any
-    pool.close()
-    pool.join()
+        ingest_nclimgrid(params)
+    #     params_list.append(params)
+    #
+    # # create a process pool, mapping the ingest
+    # # process to the iterable of parameter lists
+    # workers_count = 1  # min(len(variables), multiprocessing.cpu_count())
+    # logger.info(f"Using a process pool with {workers_count} workers")
+    # pool = multiprocessing.Pool()
+    # result = pool.map_async(ingest_nclimgrid, params_list)
+    #
+    # # get the result exception, if any
+    # pool.close()
+    # pool.join()
 
     exit(0)
