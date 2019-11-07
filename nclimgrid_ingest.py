@@ -2,21 +2,23 @@ import argparse
 from datetime import datetime
 import ftplib
 import logging
-import multiprocessing
 import os
 import shutil
 import tarfile
 import tempfile
-from typing import Dict, List
+from typing import List
 
 import numpy as np
 import pandas as pd
 import xarray as xr
 
 # ------------------------------------------------------------------------------
-# FTP locations at NCEI
-_NCLIMGRID_FTP_URL = "ftp.ncdc.noaa.gov"
+# FTP locations for the ASCII (point file) data at NCEI/NOAA
+_NCLIMGRID_FTP_HOST = "ftp.ncdc.noaa.gov"
 _NCLIMGRID_FTP_DIR = "pub/data/climgrid"
+
+# increment between successive lat and lon values
+_LAT_LON_INCREMENT = 1 / 24.0
 
 # ------------------------------------------------------------------------------
 # set up a basic, global logger
@@ -33,18 +35,20 @@ def find_files_within_range(
 ) -> List[str]:
     """
 
-    :param year_month_initial:
-    :param year_month_final:
-    :return:
+    :param year_month_initial: starting year and month of date range (inclusive),
+        with format "YYYYMM"
+    :param year_month_final: ending year and month of date range (inclusive),
+        with format "YYYYMM"
+    :return: list of monthly files at the nClimGrid FTP location that correspond
+        to the specified date range
     """
 
     # get the list of files under ftp://ftp.ncdc.noaa.gov/pub/data/climgrid/
-    ftp = ftplib.FTP(_NCLIMGRID_FTP_URL)
-    ftp.login("anonymous", "ftplib-example")
-    ftp.cwd(_NCLIMGRID_FTP_DIR)
-    data = []
-    ftp.dir(data.append)
-    ftp.quit()
+    with ftplib.FTP(host=_NCLIMGRID_FTP_HOST) as ftp:
+        ftp.login("anonymous", "ftplib-example")
+        ftp.cwd(_NCLIMGRID_FTP_DIR)
+        data = []
+        ftp.dir(data.append)
 
     # get all the file names that fall within the data range
     file_names_normal = []
@@ -116,7 +120,47 @@ def compute_days(initial_year,
 
 
 # ------------------------------------------------------------------------------
-def get_coordinate_values(ascii_file):
+def lat_lon_indexed_dataframe(
+        lat_lon_val_csv: str,
+        lat_index_name: str,
+        lon_index_name: str,
+) -> pd.DataFrame:
+    """
+    Reads a space-separated CSV file into a pandas DataFrame object and return
+    this DataFrame including indices for lat and lon.
+
+    :param lat_lon_val_csv: path to a space-separated CSV file, assumed to
+        contain lines containing three columns: lat, lon, and value
+    :param lat_index_name name to use for the lat index
+    :param lon_index_name name to use for the lon index
+    :return: DataFrame with indices corresponding to the values of the lat
+        and lon columns
+    """
+
+    # create a pandas DataFrame from the space-separated CSV file
+    data_frame = \
+        pd.read_csv(
+            lat_lon_val_csv,
+            delim_whitespace=True,
+            names=["lat", "lon", "value"],
+        )
+
+    # determine the minimum lat and lon values
+    min_lat = min(data_frame["lat"])
+    min_lon = min(data_frame["lon"])
+
+    # create lat and lon index columns corresponding to the DataFrame's lat and
+    # lon values the index starts at the minimum, i.e. lat_index[0] == min_lat
+    data_frame[lat_index_name] = (round((data_frame.lat - min_lat) / _LAT_LON_INCREMENT)).astype(int)
+    data_frame[lon_index_name] = (round((data_frame.lon - min_lon) / _LAT_LON_INCREMENT)).astype(int)
+
+    return data_frame
+
+
+# ------------------------------------------------------------------------------
+def get_coordinate_values(
+        ascii_file: str,
+) -> (np.ndarray, np.ndarray):
     """
     This function takes a nCLimGrid ASCII file for a single month and extracts
     a list of lat and lon coordinate values for the regular grid contained therein.
@@ -126,35 +170,23 @@ def get_coordinate_values(ascii_file):
     :rtype: two 1-D numpy arrays of floats
     """
 
-    # create a dataframe from the file
-    data_frame = \
-        pd.read_csv(
-            ascii_file,
-            delim_whitespace=True,
-            names=["lat", "lon", "value"],
-        )
+    # names to use for the lat and lon indices of the DataFrame
+    lat_index_name = "lat_index"
+    lon_index_name = "lon_index"
 
     # successive lats and lons are separated by 1/24th of a degree (regular grid)
-    increment = 1 / 24.
-
-    # determine the minimum lat and lon values
-    min_lat = min(data_frame.lat)
-    min_lon = min(data_frame.lon)
-
-    # create lat and lon index columns corresponding to the dataframe's lat and
-    # lon values the index starts at the minimum, i.e. lat_index[0] == min_lat
-    data_frame["lat_index"] = (round((data_frame.lat - min_lat) / increment)).astype(int)
-    data_frame["lon_index"] = (round((data_frame.lon - min_lon) / increment)).astype(int)
+    data_frame = \
+        lat_lon_indexed_dataframe(ascii_file, lat_index_name, lon_index_name)
 
     # the lat|lon indices start at zero so the number
     # of lats|lons is the length of the index plus one
-    lats_count = max(data_frame.lat_index) + 1
-    lons_count = max(data_frame.lon_index) + 1
+    lats_count = max(data_frame[lat_index_name]) + 1
+    lons_count = max(data_frame[lon_index_name]) + 1
 
     # since we know the starting lat|lon and the increment between then we can
     # create a full list of lat and lon values based on the number of lats|lons
-    lat_values = (np.arange(lats_count) * increment) + min_lat
-    lon_values = (np.arange(lons_count) * increment) + min_lon
+    lat_values = (np.arange(lats_count) * _LAT_LON_INCREMENT) + min(data_frame["lat"])
+    lon_values = (np.arange(lons_count) * _LAT_LON_INCREMENT) + min(data_frame["lon"])
 
     return lat_values, lon_values
 
@@ -214,7 +246,7 @@ def download_var_ascii(
     with tempfile.TemporaryDirectory() as download_dir:
 
         # download the GZIP file from NCEI
-        ftp = ftplib.FTP(_NCLIMGRID_FTP_URL)
+        ftp = ftplib.FTP(_NCLIMGRID_FTP_HOST)
         ftp.login("anonymous", "ftplib-example")
         ftp.cwd(_NCLIMGRID_FTP_DIR)
         destination_path = os.path.join(download_dir, source_file_name)
@@ -380,126 +412,94 @@ def initialize_dataset(
 def download_data(
         file_name: str,
         var_name: str,
-        min_lat: float,
-        min_lon: float,
-        total_lats: int,
-        total_lons: int,
 ) -> np.ndarray:
     """
 
     :param file_name:
     :param var_name:
-    :param min_lat:
-    :param min_lon:
-    :param total_lats:
-    :param total_lons:
     :return:
     """
 
+    # index column names to use within the DataFrame
+    lat_index_name = "lat_index"
+    lon_index_name = "lon_index"
+
+    # use a temporary work directory to download the ASCII file into
+    with tempfile.TemporaryDirectory() as work_directory:
+
+        # get the ASCII file we need for the nClimGrid data variable
+        ascii_file = download_var_ascii(work_directory, file_name, var_name)
+
+        # read the variable data into a lat and lon indexed DataFrame
+        df = lat_lon_indexed_dataframe(ascii_file, lat_index_name, lon_index_name)
+
     # allocate the numpy array we'll fill and return
+    total_lats = max(df[lat_index_name]) + 1
+    total_lons = max(df[lon_index_name]) + 1
     grid_shape = (total_lats, total_lons)
     variable_data = np.full(grid_shape, np.NaN, dtype=np.float32)
 
-    try:
-        with tempfile.TemporaryDirectory() as work_directory:
+    # fill the data array with data values, using the
+    # lat/lon indices to easily account for missing points
+    variable_data[df["lat_index"], df["lon_index"]] = df["value"]
 
-            # get the ASCII file we need for the nClimGrid variable
-            ascii_file = download_var_ascii(work_directory, file_name, var_name)
-
-            # if we didn't find data for the date range then return an empty array
-            if ascii_file is None:
-                logger.warning(
-                    f"Unable to find {var_name} data in source file {file_name}",
-                )
-                return variable_data
-
-            # create a Pandas DataFrame from the file
-            df = pd.read_csv(ascii_file, delim_whitespace=True, names=["lat", "lon", "value"])
-
-        # successive lats and lons are separated by 1/24th of a degree (regular grid)
-        increment = 1 / 24.
-
-        # create lat and lon index columns corresponding to
-        # the dataframe's lat and lon values, with the index
-        # starting at the minimum, i.e. lat_index[0] == min_lat
-        df["lat_index"] = (round((df.lat - min_lat) / increment)).astype(int)
-        df["lon_index"] = (round((df.lon - min_lon) / increment)).astype(int)
-
-        # fill the data array with data values, using the
-        # lat/lon indices to easily account for missing points
-        variable_data[df["lat_index"], df["lon_index"]] = df["value"]
-
-        return variable_data
-
-    except Exception as ex:
-
-        logger.error("Unable to download data", ex)
+    return variable_data
 
 
 # ------------------------------------------------------------------------------
 def ingest_nclimgrid(
-        arguments: Dict,
+        var_name: str,
+        dest_dir: str,
+        date_start: str,
+        date_end: str,
 ) -> str:
     """
     Ingests one of the four nClimGrid variables into a NetCDF for a specified
     date range.
 
-    :param arguments: dictionary of argument values
-         dest_dir: directory where NetCDF file should be written
-         var_name: name of variable, "prcp", "tmin", "tmax", or "tave"
-         date_start: starting year and month of date range (inclusive), with format "YYYYMM"
-         month_start: starting month of date range (inclusive)
-         year_end: ending year of date range (inclusive)
-         month_end: ending month of date range (inclusive)
+    :param var_name: name of variable, "prcp", "tmin", "tmax", or "tave"
+    :param dest_dir: directory where NetCDF file should be written
+    :param date_start: starting year and month of date range (inclusive), with format "YYYYMM"
+    :param date_end: ending year and month of date range (inclusive), with format "YYYYMM"
     :return:
     """
 
     logger.info(
-        f"Ingesting nClimGrid data for variable {arguments['var_name']} "
-        f"and date range {arguments['date_start']} - {arguments['date_end']}",
+        f"Ingesting nClimGrid data for variable '{var_name}' "
+        f"and date range {date_start} - {date_end}",
     )
 
     # find the FTP files within our date range
-    ftp_files_within_range = find_files_within_range(arguments["date_start"], arguments["date_end"])
+    try:
+        ftp_files_within_range = find_files_within_range(date_start, date_end)
+    except Exception as ex:
+        logger.error(f"Failed to get files for variable '{var_name}'", ex)
+        raise ex
 
     # initialize the xarray.DataSet
     dataset = \
         initialize_dataset(
             ftp_files_within_range[0],
-            arguments["var_name"],
-            int(arguments["date_start"][:4]),
-            int(arguments["date_start"][4:]),
-            int(arguments["date_end"][:4]),
-            int(arguments["date_end"][4:]),
+            var_name,
+            int(date_start[:4]),
+            int(date_start[4:]),
+            int(date_end[:4]),
+            int(date_end[4:]),
         )
-
-    # minimum coordinate values (used for later function calls)
-    min_lat = min(dataset["lat"].data)
-    min_lon = min(dataset["lon"].data)
 
     # for each month download the data from FTP and convert to a numpy array,
     # adding it into the xarray dataset at the appropriate index
     for time_step, ftp_file_name in enumerate(ftp_files_within_range):
 
         # get the values for the month
-        monthly_values = \
-            download_data(
-                ftp_file_name,
-                arguments["var_name"],
-                min_lat,
-                min_lon,
-                len(dataset["lat"]),
-                len(dataset["lon"]),
-            )
+        monthly_values = download_data(ftp_file_name, var_name)
 
         # add the monthly values into the data array for the variable
-        dataset[arguments["var_name"]][time_step] = monthly_values
+        dataset[var_name][time_step] = monthly_values
 
     # write the xarray DataSet as NetCDF file into the destination directory
-    file_name = \
-        f"nclimgrid_v1.0_{arguments['var_name']}_"\
-        f"{arguments['date_start']}_{arguments['date_end']}.nc"
-    var_file_path = os.path.join(arguments["dest_dir"], file_name)
+    file_name = f"nclimgrid_v1.0_{var_name}_{date_start}_{date_end}.nc"
+    var_file_path = os.path.join(dest_dir, file_name)
     logger.info(f"Writing nClimGrid NetCDF {var_file_path}")
     dataset.to_netcdf(var_file_path)
 
@@ -537,21 +537,11 @@ if __name__ == "__main__":
     variables = ["prcp", "tave", "tmin", "tmax"]
     params_list = []
     for variable_name in variables:
-        params = {
-            "var_name": variable_name,
-            "dest_dir": args["dest_dir"],
-            "date_start": args["start"],
-            "date_end": args["end"],
-        }
-        params_list.append(params)
-
-    # create a process pool, mapping the ingest
-    # process to the iterable of parameter lists
-    pool = multiprocessing.Pool(min(len(variables), multiprocessing.cpu_count()))
-    result = pool.map_async(ingest_nclimgrid, params_list)
-
-    # get the result exception, if any
-    pool.close()
-    pool.join()
+        ingest_nclimgrid(
+            variable_name,
+            args["dest_dir"],
+            args["start"],
+            args["end"],
+        )
 
     exit(0)
