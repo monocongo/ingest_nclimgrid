@@ -2,7 +2,6 @@ import argparse
 from datetime import datetime
 import ftplib
 import logging
-import multiprocessing
 import os
 import shutil
 import tarfile
@@ -14,8 +13,8 @@ import pandas as pd
 import xarray as xr
 
 # ------------------------------------------------------------------------------
-# FTP locations at NCEI
-_NCLIMGRID_FTP_URL = "ftp.ncdc.noaa.gov"
+# FTP locations for the ASCII (point file) data at NCEI/NOAA
+_NCLIMGRID_FTP_HOST = "ftp.ncdc.noaa.gov"
 _NCLIMGRID_FTP_DIR = "pub/data/climgrid"
 
 # ------------------------------------------------------------------------------
@@ -39,13 +38,11 @@ def find_files_within_range(
     """
 
     # get the list of files under ftp://ftp.ncdc.noaa.gov/pub/data/climgrid/
-    # ftp = ftplib.FTP(_NCLIMGRID_FTP_URL)
-    with ftplib.FTP(host=_NCLIMGRID_FTP_URL) as ftp:
+    with ftplib.FTP(host=_NCLIMGRID_FTP_HOST) as ftp:
         ftp.login("anonymous", "ftplib-example")
         ftp.cwd(_NCLIMGRID_FTP_DIR)
         data = []
         ftp.dir(data.append)
-    # ftp.quit()
 
     # get all the file names that fall within the data range
     file_names_normal = []
@@ -215,7 +212,7 @@ def download_var_ascii(
     with tempfile.TemporaryDirectory() as download_dir:
 
         # download the GZIP file from NCEI
-        ftp = ftplib.FTP(_NCLIMGRID_FTP_URL)
+        ftp = ftplib.FTP(_NCLIMGRID_FTP_HOST)
         ftp.login("anonymous", "ftplib-example")
         ftp.cwd(_NCLIMGRID_FTP_DIR)
         destination_path = os.path.join(download_dir, source_file_name)
@@ -553,17 +550,5 @@ if __name__ == "__main__":
             "date_end": args["end"],
         }
         ingest_nclimgrid(params)
-    #     params_list.append(params)
-    #
-    # # create a process pool, mapping the ingest
-    # # process to the iterable of parameter lists
-    # workers_count = 1  # min(len(variables), multiprocessing.cpu_count())
-    # logger.info(f"Using a process pool with {workers_count} workers")
-    # pool = multiprocessing.Pool()
-    # result = pool.map_async(ingest_nclimgrid, params_list)
-    #
-    # # get the result exception, if any
-    # pool.close()
-    # pool.join()
 
     exit(0)
